@@ -7,8 +7,12 @@
 import gradio as gr
 
 import modules.scripts as scripts
-from modules.processing import process_images,fix_seed,Processed
+from modules.processing import process_images,fix_seed,Processed,process_images,StableDiffusionProcessing
 from modules.shared import opts, cmd_opts, state, Options
+import modules.shared as shared
+from modules.hypernetworks import hypernetwork
+
+import modules.sd_models
 
 import sys
 import os
@@ -40,15 +44,10 @@ class Scripts(scripts.Script):
 		return [lbl, dry_run, notice, plug]
 
 	def process(self, p, lbl, dry_run, notice, plug):
-		if (dry_run):
-			temp_debug = Unprompted.Config.debug
-			Unprompted.Config.debug = True
-
-		print(f"what is all prompts? {p.all_prompts[0]}")
-
+		
 		# Reset vars
-		original_prompt = p.all_prompts[0]
-		original_negative_prompt = p.all_negative_prompts[0]
+		original_prompt = p.prompt
+		original_negative_prompt = p.negative_prompts
 		Unprompted.shortcode_user_vars = {}
 
 		# Extra vars
@@ -64,50 +63,129 @@ class Scripts(scripts.Script):
 
 		# Apply any updates to system vars
 		for att in dir(p):
-			if not att.startswith("__"):
-				setattr(p,att,Unprompted.shortcode_user_vars[att])	
-
-		if p.seed is not None and p.seed != -1.0:
-			if (Unprompted.is_int(p.seed)): p.seed = int(p.seed)
-			p.all_seeds[0] = p.seed
-		else:
-			p.seed = -1
-			p.seed = fix_seed(p)
+			if not att.startswith("__") and  att.startswith("negative_prompt"):
+				setattr(p,att,Unprompted.shortcode_user_vars[att])
+		
+		# p.seed never egal to None or -1
+		
+		#if p.seed is not None and p.seed != -1.0:
+		#	for i, val in enumerate(p.all_seeds):
+		#		if (Unprompted.is_int(p.seed)): p.seed = int(p.seed)
+		#		p.all_seeds[i] = p.seed
+		#		print("Seed in process")
+		#		print(p.all_seeds[i])
+		#		print("-----")
+		#else:
+		#	p.seed = -1
+		#	p.seed = fix_seed(p)
 
 		# Batch support
 		if (Unprompted.Config.stable_diffusion.batch_support):
 			for i, val in enumerate(p.all_prompts):
-				if (i == 0):
-					Unprompted.shortcode_user_vars["batch_index"] = i
+				Unprompted.shortcode_user_vars["batch_index"] = i
+
+				if (i == 0): 
 					p.all_prompts[0] = Unprompted.shortcode_user_vars["prompt"]
 					p.all_negative_prompts[0] = Unprompted.shortcode_user_vars["negative_prompt"]
 				else:
-					Unprompted.shortcode_user_vars = {}
-					Unprompted.shortcode_user_vars["batch_index"] = i
 					p.all_prompts[i] = Unprompted.process_string(original_prompt)
 					p.all_negative_prompts[i] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"])
-
 				Unprompted.log(f"Result {i}: {p.all_prompts[i]}",False)
 		# Keep the same prompt between runs
 		else:
 			for i, val in enumerate(p.all_prompts):
 				p.all_prompts[i] = Unprompted.shortcode_user_vars["prompt"]
 				p.all_negative_prompts[i] = Unprompted.shortcode_user_vars["negative_prompt"]
+	
+	def process_batch(self, p, lbl, dry_run, notice, plug, **kwargs):
+		if (dry_run):
+			temp_debug = Unprompted.Config.debug
+			Unprompted.Config.debug = True
+		
+		# Reset var on the first batch
+		if kwargs["batch_number"] == 0:
+			self.original_prompt = p.prompt
+			self.original_negative_prompt = p.negative_prompt
+			self.sd_model = p.sd_model
+
+		# Reset vars
+		Unprompted.shortcode_user_vars = {}
+
+		# Extra vars
+		Unprompted.shortcode_user_vars["batch_index"] = 0
+
+		# Set up system var support - copy relevant p attributes into shortcode var object
+		for att in dir(p):
+			if not att.startswith("__"):
+				Unprompted.shortcode_user_vars[att] = getattr(p,att)
+		
+		Unprompted.shortcode_user_vars["prompt"] = Unprompted.process_string(self.original_prompt)
+		Unprompted.shortcode_user_vars["negative_prompt"] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"] if Unprompted.shortcode_user_vars["negative_prompt"] else self.original_negative_prompt)
+		
+		# Not usefull for now because p.seed never egal to None or -1.0 (seed calculate before enter script I think)
+		if p.seed is not None and p.seed != -1.0:
+			for i, val in enumerate(kwargs["seeds"]):
+				kwargs["seeds"][i] = p.all_seeds[len(kwargs["seeds"])*kwargs["batch_number"]+i]
+		else:
+			p.seed = -1
+			p.seed = fix_seed(p)
+		
+		# Apply any updates to system vars
+		for att in dir(p):
+			if not att.startswith("__"):
+				if att != "sd_model":
+					setattr(p,att,Unprompted.shortcode_user_vars[att])
+				# Apply the sd_model like in xy_grid.py
+				elif att == "sd_model" and isinstance(Unprompted.shortcode_user_vars[att], str):
+					x = Unprompted.shortcode_user_vars["sd_model"]
+					info = modules.sd_models.get_closet_checkpoint_match(x)
+					if info is None:
+						raise RuntimeError(f"Unknown checkpoint: {x}")
+					modules.sd_models.reload_model_weights(shared.sd_model, info)
+					setattr(p,att,shared.sd_model)
+				# Not usefull I think, but maybe
+				else:
+					setattr(p,att,Unprompted.shortcode_user_vars[att])
+			
+
+		# Batch support
+		if kwargs["batch_number"] == 0:			
+		
+			if (Unprompted.Config.stable_diffusion.batch_support):
+				for i, val in enumerate(p.all_prompts):
+					Unprompted.shortcode_user_vars["batch_index"] = i
+					if (i == 0): 
+						p.all_prompts[0] = Unprompted.shortcode_user_vars["prompt"]
+						p.all_negative_prompts[0] = Unprompted.shortcode_user_vars["negative_prompt"]
+					else:
+						p.all_prompts[i] = Unprompted.process_string(self.original_prompt)
+						p.all_negative_prompts[i] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"])
+					Unprompted.log(f"Result {i}: {p.all_prompts[i]}",False)
+			# Keep the same prompt between runs
+			else:
+				for i, val in enumerate(p.all_prompts):
+					p.all_prompts[i] = Unprompted.shortcode_user_vars["prompt"]
+					p.all_negative_prompts[i] = Unprompted.shortcode_user_vars["negative_prompt"]
+		
+		# Apply the prompt, depending of the batch_number, in the kwargs		
+		for i, val in enumerate(kwargs["prompts"]):
+			kwargs["prompts"][i] = p.all_prompts[len(kwargs["prompts"])*kwargs["batch_number"]+i]
 
 		# Skips the bulk of inference (note: still produces a blank image)
 		if (dry_run):
 			p.batch_size = 1
 			p.steps = 0
 			Unprompted.Config.debug = temp_debug
-
 		# Cleanup routines
 		Unprompted.log("Entering Cleanup routine...",False)
 		for i in Unprompted.cleanup_routines:
 			Unprompted.shortcode_objects[i].cleanup()
-		
 		# Extensions do not need to return anything, gg no re
-		return p
-
+		
+	def postprocess(self, p, processed, *args):
+		# Reload the user checkpoint
+		modules.sd_models.reload_model_weights(self.sd_model)
+	
 	# After routines
 	def run(self, p):
 		# After routines
