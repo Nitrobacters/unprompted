@@ -58,7 +58,6 @@ class Scripts(scripts.Script):
 			if not att.startswith("__"):
 				Unprompted.shortcode_user_vars[att] = getattr(p,att)
 
-		Unprompted.shortcode_user_vars["prompt"] = Unprompted.process_string(original_prompt)
 		Unprompted.shortcode_user_vars["negative_prompt"] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"] if Unprompted.shortcode_user_vars["negative_prompt"] else original_negative_prompt)
 
 		# Apply any updates to system vars
@@ -84,17 +83,13 @@ class Scripts(scripts.Script):
 			for i, val in enumerate(p.all_prompts):
 				Unprompted.shortcode_user_vars["batch_index"] = i
 
-				if (i == 0): 
-					p.all_prompts[0] = Unprompted.shortcode_user_vars["prompt"]
+				if (i == 0):
 					p.all_negative_prompts[0] = Unprompted.shortcode_user_vars["negative_prompt"]
 				else:
-					p.all_prompts[i] = Unprompted.process_string(original_prompt)
 					p.all_negative_prompts[i] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"])
-				Unprompted.log(f"Result {i}: {p.all_prompts[i]}",False)
 		# Keep the same prompt between runs
 		else:
 			for i, val in enumerate(p.all_prompts):
-				p.all_prompts[i] = Unprompted.shortcode_user_vars["prompt"]
 				p.all_negative_prompts[i] = Unprompted.shortcode_user_vars["negative_prompt"]
 	
 	def process_batch(self, p, lbl, dry_run, notice, plug, **kwargs):
@@ -148,29 +143,28 @@ class Scripts(scripts.Script):
 					setattr(p,att,Unprompted.shortcode_user_vars[att])
 			
 
-		# Batch support
-		if kwargs["batch_number"] == 0:			
+		# Batch support		
 		
-			if (Unprompted.Config.stable_diffusion.batch_support):
-				for i, val in enumerate(p.all_prompts):
-					Unprompted.shortcode_user_vars["batch_index"] = i
-					if (i == 0): 
-						p.all_prompts[0] = Unprompted.shortcode_user_vars["prompt"]
-						p.all_negative_prompts[0] = Unprompted.shortcode_user_vars["negative_prompt"]
-					else:
-						p.all_prompts[i] = Unprompted.process_string(self.original_prompt)
-						p.all_negative_prompts[i] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"])
-					Unprompted.log(f"Result {i}: {p.all_prompts[i]}",False)
-			# Keep the same prompt between runs
-			else:
-				for i, val in enumerate(p.all_prompts):
-					p.all_prompts[i] = Unprompted.shortcode_user_vars["prompt"]
-					p.all_negative_prompts[i] = Unprompted.shortcode_user_vars["negative_prompt"]
+		if (Unprompted.Config.stable_diffusion.batch_support):
+			for i, val in enumerate(kwargs["prompts"]):
+				Unprompted.shortcode_user_vars["batch_index"] = i
+				if (i == 0): 
+					kwargs["prompts"][0] = Unprompted.shortcode_user_vars["prompt"]
+					p.all_negative_prompts[0] = Unprompted.shortcode_user_vars["negative_prompt"]
+				else:
+					kwargs["prompts"][i] = Unprompted.process_string(self.original_prompt)
+					p.all_negative_prompts[i] = Unprompted.process_string(Unprompted.shortcode_user_vars["negative_prompt"])
+				Unprompted.log(f"Result {i}: {kwargs['prompts'][i]}",False)
+		# Keep the same prompt between runs
+		else:
+			for i, val in enumerate(p.all_prompts):
+				p.all_prompts[i] = Unprompted.shortcode_user_vars["prompt"]
+				p.all_negative_prompts[i] = Unprompted.shortcode_user_vars["negative_prompt"]
 		
 		# Apply the prompt, depending of the batch_number, in the kwargs		
 		for i, val in enumerate(kwargs["prompts"]):
-			kwargs["prompts"][i] = p.all_prompts[len(kwargs["prompts"])*kwargs["batch_number"]+i]
-
+			p.all_prompts[len(kwargs["prompts"])*kwargs["batch_number"]+i] = kwargs["prompts"][i]
+		
 		# Skips the bulk of inference (note: still produces a blank image)
 		if (dry_run):
 			p.batch_size = 1
