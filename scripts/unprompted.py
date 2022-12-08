@@ -47,7 +47,7 @@ class Scripts(scripts.Script):
 		
 		# Reset vars
 		original_prompt = p.prompt
-		original_negative_prompt = p.negative_prompts
+		original_negative_prompt = p.negative_prompt
 		Unprompted.shortcode_user_vars = {}
 
 		# Extra vars
